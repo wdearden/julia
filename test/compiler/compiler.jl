@@ -1581,3 +1581,12 @@ function _g_ifelse_isa_()
     ifelse(isa(x, Nothing), 1, x)
 end
 @test Base.return_types(_g_ifelse_isa_, ()) == [Int]
+
+# Don't pessimize apply_type to anything worse than Type and yield Bottom for invalid Unions
+@test Core.Compiler.return_type(Core.apply_type, Tuple{Type{Union}}) == Type{Union{}}
+@test Core.Compiler.return_type(Core.apply_type, Tuple{Type{Union},Any}) == Type
+@test Core.Compiler.return_type(Core.apply_type, Tuple{Type{Union},Any,Any}) == Type
+@test Core.Compiler.return_type(Core.apply_type, Tuple{Type{Union},Int}) == Union{}
+@test Core.Compiler.return_type(Core.apply_type, Tuple{Type{Union},Any,Int}) == Union{}
+@test Core.Compiler.return_type(Core.apply_type, Tuple{Any}) == Type
+@test Core.Compiler.return_type(Core.apply_type, Tuple{Any,Any}) == Type
