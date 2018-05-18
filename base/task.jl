@@ -205,12 +205,13 @@ function task_done_hook(t::Task)
         end
         if !suppress_excp_printing(t)
             let bt = t.backtrace
-                # run a new task to print the error for us
-                @schedule with_output_color(Base.error_color(), stderr) do io
+                # run a new task to print the error for us (we should not yield here!)
+                dtsk = @task with_output_color(Base.error_color(), stderr) do io
                     print(io, "ERROR (unhandled task failure): ")
                     showerror(io, result, bt)
                     println(io)
                 end
+                schedule(dtsk, unyielding=true)
             end
         end
     end
