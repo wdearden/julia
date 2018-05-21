@@ -958,7 +958,7 @@ end
 
 function finish(compact::IncrementalCompact)
     non_dce_finish!(compact)
-    simple_dce!(compact)
+    # simple_dce!(compact)
     complete(compact)
 end
 
