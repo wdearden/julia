@@ -204,7 +204,9 @@ if [ -n "$USEMSVC" ]; then
 else
   # Use BinaryBuilder
   echo 'USE_BINARYBUILDER_LLVM = 1' >> Make.user
-  echo 'BINARYBUILDER_LLVM_RELDBG = 1' >> Make.user
+  # We should enable this in the future, since we do
+  # want assertion for our CI.
+  # echo 'BINARYBUILDER_LLVM_RELDBG = 1' >> Make.user
   echo 'override DEP_LIBS += llvm openlibm' >> Make.user
   export CCACHE_DIR=/cygdrive/c/ccache
   echo 'USECCACHE=1' >> Make.user
