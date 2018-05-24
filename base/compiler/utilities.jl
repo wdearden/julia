@@ -131,7 +131,7 @@ function retrieve_code_info(linfo::MethodInstance)
             c = copy_code_info(m.source)
         end
     end
-    return c
+    return c::CodeInfo
 end
 
 function code_for_method(method::Method, @nospecialize(atypes), sparams::SimpleVector, world::UInt, preexisting::Bool=false)
@@ -172,9 +172,20 @@ function method_for_inference_heuristics(method::Method, @nospecialize(sig), spa
     return nothing
 end
 
-function exprtype(@nospecialize(x), src, mod::Module)
+exprtype(@nospecialize(x), state) = exprtype(x, state.src, state.sp)
+
+function exprtype(@nospecialize(x), src, spvals)
     if isa(x, Expr)
-        return (x::Expr).typ
+        if x.head === :new
+            return instanceof_tfunc(exprtype(x.args[1], src, spvals))[1]
+        elseif x.head === :static_parameter
+            return sparam_type(spvals[x.args[1]])
+        elseif x.head === :boundscheck
+            return Bool
+        elseif x.head === :copyast
+            return exprtype(x.args[1], src, spvals)
+        end
+        return x.typ
     elseif isa(x, SlotNumber)
         return src.slottypes[(x::SlotNumber).id]
     elseif isa(x, TypedSlot)
@@ -183,8 +194,6 @@ function exprtype(@nospecialize(x), src, mod::Module)
         return abstract_eval_ssavalue(x::SSAValue, src)
     elseif isa(x, Argument)
         return isa(src, IncrementalCompact) ? src.ir.argtypes[x.n] : src.argtypes[x.n]
-    elseif isa(x, Symbol)
-        return abstract_eval_global(mod, x::Symbol)
     elseif isa(x, QuoteNode)
         return AbstractEvalConstant((x::QuoteNode).value)
     elseif isa(x, GlobalRef)

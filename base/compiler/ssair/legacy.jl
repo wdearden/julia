@@ -217,7 +217,7 @@ function replace_code!(ci::CodeInfo, code::IRCode, nargs::Int, linetable::Vector
     return ci
 end
 
-function inflate_ir(ci::CodeInfo)
+function inflate_ir(ci::CodeInfo, spvals)
     code = copy_exprargs(ci.code)
     for i = 1:length(code)
         if isa(code[i], Expr)
@@ -249,7 +249,7 @@ function inflate_ir(ci::CodeInfo)
             code[i] = stmt
         end
     end
-    ir = IRCode(code, copy(ci.ssavaluetypes), copy(ci.codelocs), copy(ci.ssaflags), cfg, ci.linetable, copy(ci.slottypes), ci.linetable[1].mod, Any[])
+    ir = IRCode(code, copy(ci.ssavaluetypes), copy(ci.codelocs), copy(ci.ssaflags), cfg, ci.linetable, copy(ci.slottypes), ci.linetable[1].mod, Any[], spvals)
     return ir
 end
 
