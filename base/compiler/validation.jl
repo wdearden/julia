@@ -104,7 +104,7 @@ function validate_code!(errors::Vector{>:InvalidCodeError}, c::CodeInfo, is_top_
     ssavals = BitSet()
     lhs_slotnums = BitSet()
     for x in c.code
-        if c.codelocs !== nothing && is_valid_rvalue(x)
+        if c.codelocs !== nothing && is_valid_rvalue(SSAValue(-1), x)
         elseif isa(x, Expr)
             head = x.head
             if !is_top_level
@@ -125,7 +125,7 @@ function validate_code!(errors::Vector{>:InvalidCodeError}, c::CodeInfo, is_top_
                     n = lhs.id
                     push!(lhs_slotnums, n)
                 end
-                if !is_valid_rvalue(rhs)
+                if !is_valid_rvalue(lhs, rhs)
                     push!(errors, InvalidCodeError(INVALID_RVALUE, rhs))
                 end
                 validate_val!(lhs)
@@ -227,10 +227,10 @@ function is_valid_argument(x)
              isa(x,LineNumberNode) || isa(x,NewvarNode))
 end
 
-function is_valid_rvalue(x)
+function is_valid_rvalue(lhs, x)
     is_valid_argument(x) && return true
     if isa(x, Expr) && x.head in (:new, :the_exception, :isdefined, :call, :invoke, :foreigncall, :cfunction, :gc_preserve_begin)
-        return true
+        return isa(lhs, SSAValue) || isa(lhs, Slot)
     end
     return false
 end

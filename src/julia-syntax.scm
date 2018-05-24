@@ -3342,10 +3342,11 @@ f(x) = yt(x)
            (memq (car e) '(quote inert top core globalref outerref
                                  slot static_parameter boundscheck)))))
 
-(define (valid-ir-rvalue? lhs e)
+(define (valid-ir-rvalue? lhs e lam)
   (or (ssavalue? lhs)
       (valid-ir-argument? e)
       (and (symbol? lhs) (pair? e)
+           (assq lhs (car (lam:vinfo lam)))
            (memq (car e) '(new the_exception isdefined call invoke foreigncall cfunction gc_preserve_begin copyast)))))
 
 (define (valid-ir-return? e)
@@ -3490,7 +3491,7 @@ f(x) = yt(x)
             cnd)))
     (define (emit-assignment lhs rhs)
       (if rhs
-          (if (valid-ir-rvalue? lhs rhs)
+          (if (valid-ir-rvalue? lhs rhs lam)
               (emit `(= ,lhs ,rhs))
               (let ((rr (make-ssavalue)))
                 (emit `(= ,rr ,rhs))
