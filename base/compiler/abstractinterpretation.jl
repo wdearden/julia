@@ -933,8 +933,11 @@ function abstract_interpret(@nospecialize(e), vtypes::VarTable, sv::InferenceSta
     # handle assignment
     if e.head === :(=)
         t = abstract_eval(e.args[2], vtypes, sv)
-        t === Bottom && return ()
         lhs = e.args[1]
+        if isa(lhs, SlotNumber) || (isa(lhs, TypedSlot) && lhs.typ !== t)
+            e.args[1] = TypedSlot(lhs.id, t)
+        end
+        t === Bottom && return ()
         if isa(lhs, Slot) || isa(lhs, SSAValue)
             # don't bother for GlobalRef
             return StateUpdate(lhs, VarState(t, false), vtypes)
