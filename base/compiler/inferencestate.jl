@@ -31,15 +31,11 @@ mutable struct InferenceState
     ssavalue_uses::Vector{BitSet}
     ssavalue_defs::Vector{LineNum}
 
-    backedges::Vector{Tuple{InferenceState, LineNum}} # call-graph backedges connecting from callee to caller
+    cycle_backedges::Vector{Tuple{InferenceState, LineNum}} # call-graph backedges connecting from callee to caller
     callers_in_cycle::Vector{InferenceState}
     parent::Union{Nothing, InferenceState}
 
-    const_api::Bool
-    const_ret::Bool
-
     # TODO: move these to InferenceResult / Params?
-    optimize::Bool
     cached::Bool
     limited::Bool
     inferred::Bool
@@ -47,7 +43,7 @@ mutable struct InferenceState
 
     # src is assumed to be a newly-allocated CodeInfo, that can be modified in-place to contain intermediate results
     function InferenceState(result::InferenceResult, src::CodeInfo,
-                            optimize::Bool, cached::Bool, params::Params)
+                            cached::Bool, params::Params)
         linfo = result.linfo
         code = src.code::Array{Any,1}
         toplevel = !isa(linfo.def, Method)
@@ -144,26 +140,22 @@ mutable struct InferenceState
             Union{}, W, 1, n,
             cur_hand, handler_at, n_handlers,
             ssavalue_uses, ssavalue_defs,
-            Vector{Tuple{InferenceState,LineNum}}(), # backedges
+            Vector{Tuple{InferenceState,LineNum}}(), # cycle_backedges
             Vector{InferenceState}(), # callers_in_cycle
             #=parent=#nothing,
-            false, false, optimize, cached, false, false, false)
+            cached, false, false, false)
         result.result = frame
         cached && push!(params.cache, result)
         return frame
     end
 end
 
-function InferenceState(linfo::MethodInstance, optimize::Bool, cached::Bool, params::Params)
-    return InferenceState(InferenceResult(linfo), optimize, cached, params)
-end
-
-function InferenceState(result::InferenceResult, optimize::Bool, cached::Bool, params::Params)
+function InferenceState(result::InferenceResult, cached::Bool, params::Params)
     # prepare an InferenceState object for inferring lambda
     src = retrieve_code_info(result.linfo)
     src === nothing && return nothing
     validate_code_in_debug_mode(result.linfo, src, "lowered")
-    return InferenceState(result, src, optimize, cached, params)
+    return InferenceState(result, src, cached, params)
 end
 
 _topmod(sv::InferenceState) = _topmod(sv.mod)
@@ -200,10 +192,10 @@ function record_ssa_assign(ssa_id::Int, @nospecialize(new), frame::InferenceStat
     nothing
 end
 
-function add_backedge!(frame::InferenceState, caller::InferenceState, currpc::Int)
+function add_cycle_backedge!(frame::InferenceState, caller::InferenceState, currpc::Int)
     update_valid_age!(frame, caller)
     backedge = (caller, currpc)
-    contains_is(frame.backedges, backedge) || push!(frame.backedges, backedge)
+    contains_is(frame.cycle_backedges, backedge) || push!(frame.cycle_backedges, backedge)
     return frame
 end
 

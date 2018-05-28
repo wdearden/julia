@@ -1,7 +1,8 @@
 # This file is a part of Julia. License is MIT: https://julialang.org/license
 
 # tests for Core.Compiler correctness and precision
-import Core.Compiler: Const, Conditional, ⊑, isdispatchelem
+import Core.Compiler: Const, Conditional, ⊑
+isdispatchelem(@nospecialize x) = !isa(x, Type) || Core.Compiler.isdispatchelem(x)
 
 using Random, Core.IR
 using InteractiveUtils: code_llvm
@@ -252,7 +253,7 @@ end
 end
 let ast12474 = code_typed(f12474, Tuple{Float64})
     @test isdispatchelem(ast12474[1][2])
-    @test all(x -> isdispatchelem(Core.Compiler.typesubtract(x, Nothing)), ast12474[1][1].slottypes)
+    @test all(x -> x isa Const || isdispatchelem(Core.Compiler.typesubtract(x, Nothing)), ast12474[1][1].slottypes)
 end
 
 
@@ -536,11 +537,11 @@ for codetype in Any[
         code_typed(g19348, (typeof((1, 2.0)),))[1]]
     # make sure none of the slottypes are left as Core.Compiler.Const objects
     code = codetype[1]
-    @test all(x->isa(x, Type), code.slottypes)
+    @test all(x -> isa(x, Type) || isa(x, Const), code.slottypes)
     local notconst(@nospecialize(other)) = true
     notconst(slot::TypedSlot) = @test isa(slot.typ, Type)
     function notconst(expr::Expr)
-        @test isa(expr.typ, Type)
+        @test isa(expr.typ, Type) || isa(expr.typ, Const) || isa(expr.typ, Conditional) || expr.typ
         for a in expr.args
             notconst(a)
         end
@@ -1128,7 +1129,7 @@ function find_call(code::Core.CodeInfo, @nospecialize(func), narg)
                     farg = typeof(getfield(farg.mod, farg.name))
                 end
             elseif isa(farg, Core.SSAValue)
-                farg = code.ssavaluetypes[farg.id + (new_style_ir ? 0 : 1)]
+                farg = Core.Compiler.widenconst(code.ssavaluetypes[farg.id + (new_style_ir ? 0 : 1)])
             else
                 farg = typeof(farg)
             end

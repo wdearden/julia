@@ -171,11 +171,11 @@ function abstract_call_method_with_const_args(@nospecialize(f), argtypes::Vector
                 atypes[i] = a # inject Const argtypes into inference
             end
         end
-        frame = InferenceState(inf_result, #=optimize=#true, #=cache=#false, sv.params)
+        frame = InferenceState(inf_result, #=cache=#false, sv.params)
         frame.limited = true
         frame.parent = sv
         push!(sv.params.cache, inf_result)
-        typeinf(frame)
+        typeinf(frame) || return Any
     end
     result = inf_result.result
     isa(result, InferenceState) && return Any # TODO: is this recursive constant inference?
@@ -948,4 +948,189 @@ function abstract_interpret(@nospecialize(e), vtypes::VarTable, sv::InferenceSta
         end
     end
     return vtypes
+end
+
+# make as much progress on `frame` as possible (without handling cycles)
+function typeinf_local(frame::InferenceState)
+    @assert !frame.inferred
+    frame.dont_work_on_me = true # mark that this function is currently on the stack
+    W = frame.ip
+    s = frame.stmt_types
+    n = frame.nstmts
+    while frame.pc´´ <= n
+        # make progress on the active ip set
+        local pc::Int = frame.pc´´ # current program-counter
+        while true # inner loop optimizes the common case where it can run straight from pc to pc + 1
+            #print(pc,": ",s[pc],"\n")
+            local pc´::Int = pc + 1 # next program-counter (after executing instruction)
+            if pc == frame.pc´´
+                # need to update pc´´ to point at the new lowest instruction in W
+                min_pc = _bits_findnext(W.bits, pc + 1)
+                frame.pc´´ = min_pc == -1 ? n + 1 : min_pc
+            end
+            delete!(W, pc)
+            frame.currpc = pc
+            frame.cur_hand = frame.handler_at[pc]
+            frame.stmt_edges[pc] === () || empty!(frame.stmt_edges[pc])
+            stmt = frame.src.code[pc]
+            changes = abstract_interpret(stmt, s[pc]::VarTable, frame)
+            if changes === ()
+                break # this line threw an error and so there is no need to continue
+                # changes = s[pc]
+            end
+            if frame.cur_hand !== () && isa(changes, StateUpdate)
+                # propagate new type info to exception handler
+                # the handling for Expr(:enter) propagates all changes from before the try/catch
+                # so this only needs to propagate any changes
+                l = frame.cur_hand[1]
+                if stupdate1!(s[l]::VarTable, changes::StateUpdate) !== false
+                    if l < frame.pc´´
+                        frame.pc´´ = l
+                    end
+                    push!(W, l)
+                end
+            end
+            if isa(changes, StateUpdate)
+                changes_var = changes.var
+                if isa(changes_var, SSAValue)
+                    # directly forward changes to an SSAValue to the applicable line
+                    record_ssa_assign(changes_var.id + 1, changes.vtype.typ, frame)
+                end
+            elseif isa(stmt, NewvarNode)
+                sn = slot_id(stmt.slot)
+                changes = changes::VarTable
+                changes[sn] = VarState(Bottom, true)
+            elseif isa(stmt, GotoNode)
+                pc´ = (stmt::GotoNode).label
+            elseif isa(stmt, Expr)
+                stmt = stmt::Expr
+                hd = stmt.head
+                if hd === :gotoifnot
+                    condt = abstract_eval(stmt.args[1], s[pc], frame)
+                    condval = maybe_extract_const_bool(condt)
+                    l = stmt.args[2]::Int
+                    changes = changes::VarTable
+                    # constant conditions
+                    if condval === true
+                    elseif condval === false
+                        pc´ = l
+                    else
+                        # general case
+                        frame.handler_at[l] = frame.cur_hand
+                        changes_else = changes
+                        if isa(condt, Conditional)
+                            if condt.elsetype !== Any && condt.elsetype !== changes[slot_id(condt.var)]
+                                changes_else = StateUpdate(condt.var, VarState(condt.elsetype, false), changes_else)
+                            end
+                            if condt.vtype !== Any && condt.vtype !== changes[slot_id(condt.var)]
+                                changes = StateUpdate(condt.var, VarState(condt.vtype, false), changes)
+                            end
+                        end
+                        newstate_else = stupdate!(s[l], changes_else)
+                        if newstate_else !== false
+                            # add else branch to active IP list
+                            if l < frame.pc´´
+                                frame.pc´´ = l
+                            end
+                            push!(W, l)
+                            s[l] = newstate_else
+                        end
+                    end
+                elseif hd === :return
+                    pc´ = n + 1
+                    rt = abstract_eval(stmt.args[1], s[pc], frame)
+                    if !isa(rt, Const) && !isa(rt, Type)
+                        # only propagate information we know we can store
+                        # and is valid inter-procedurally
+                        rt = widenconst(rt)
+                    end
+                    if tchanged(rt, frame.bestguess)
+                        # new (wider) return type for frame
+                        frame.bestguess = tmerge(frame.bestguess, rt)
+                        for (caller, caller_pc) in frame.cycle_backedges
+                            # notify backedges of updated type information
+                            if caller.stmt_types[caller_pc] !== ()
+                                if caller_pc < caller.pc´´
+                                    caller.pc´´ = caller_pc
+                                end
+                                push!(caller.ip, caller_pc)
+                            end
+                        end
+                    end
+                elseif hd === :enter
+                    l = stmt.args[1]::Int
+                    frame.cur_hand = (l, frame.cur_hand)
+                    # propagate type info to exception handler
+                    l = frame.cur_hand[1]
+                    old = s[l]
+                    new = s[pc]::Array{Any,1}
+                    newstate_catch = stupdate!(old, new)
+                    if newstate_catch !== false
+                        if l < frame.pc´´
+                            frame.pc´´ = l
+                        end
+                        push!(W, l)
+                        s[l] = newstate_catch
+                    end
+                    typeassert(s[l], VarTable)
+                    frame.handler_at[l] = frame.cur_hand
+                elseif hd === :leave
+                    for i = 1:((stmt.args[1])::Int)
+                        frame.cur_hand = frame.cur_hand[2]
+                    end
+                end
+            end
+            pc´ > n && break # can't proceed with the fast-path fall-through
+            frame.handler_at[pc´] = frame.cur_hand
+            newstate = stupdate!(s[pc´], changes)
+            if isa(stmt, GotoNode) && frame.pc´´ < pc´
+                # if we are processing a goto node anyways,
+                # (such as a terminator for a loop, if-else, or try block),
+                # consider whether we should jump to an older backedge first,
+                # to try to traverse the statements in approximate dominator order
+                if newstate !== false
+                    s[pc´] = newstate
+                end
+                push!(W, pc´)
+                pc = frame.pc´´
+            elseif newstate !== false
+                s[pc´] = newstate
+                pc = pc´
+            elseif pc´ in W
+                pc = pc´
+            else
+                break
+            end
+        end
+    end
+    frame.dont_work_on_me = false
+    nothing
+end
+
+# make as much progress on `frame` as possible (by handling cycles)
+function typeinf_nocycle(frame::InferenceState)
+    typeinf_local(frame)
+
+    # If the current frame is part of a cycle, solve the cycle before finishing
+    no_active_ips_in_callers = false
+    while !no_active_ips_in_callers
+        no_active_ips_in_callers = true
+        for caller in frame.callers_in_cycle
+            caller.dont_work_on_me && return false # cycle is above us on the stack
+            if caller.pc´´ <= caller.nstmts # equivalent to `isempty(caller.ip)`
+                # Note that `typeinf_local(caller)` can potentially modify the other frames
+                # `frame.callers_in_cycle`, which is why making incremental progress requires the
+                # outer while loop.
+                typeinf_local(caller)
+                no_active_ips_in_callers = false
+            end
+            if caller.min_valid < frame.min_valid
+                caller.min_valid = frame.min_valid
+            end
+            if caller.max_valid > frame.max_valid
+                caller.max_valid = frame.max_valid
+            end
+        end
+    end
+    return true
 end
