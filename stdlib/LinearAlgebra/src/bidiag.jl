@@ -239,9 +239,9 @@ for func in (:conj, :copy, :real, :imag)
     @eval ($func)(M::Bidiagonal) = Bidiagonal(($func)(M.dv), ($func)(M.ev), M.uplo)
 end
 
-adjoint(B::Bidiagonal) = Adjoint(B)
-transpose(B::Bidiagonal) = Transpose(B)
-adjoint(B::Bidiagonal{<:Real}) = Bidiagonal(B.dv, B.ev, B.uplo == 'U' ? :L : :U)
+adjoint(  B::Bidiagonal) = Bidiagonal(  adjoint.(B.dv),   adjoint.(B.ev), B.uplo == 'U' ? :L : :U)
+transpose(B::Bidiagonal) = Bidiagonal(transpose.(B.dv), transpose.(B.ev), B.uplo == 'U' ? :L : :U)
+adjoint(B::Bidiagonal{<:Real})     = Bidiagonal(B.dv, B.ev, B.uplo == 'U' ? :L : :U)
 transpose(B::Bidiagonal{<:Number}) = Bidiagonal(B.dv, B.ev, B.uplo == 'U' ? :L : :U)
 Base.copy(aB::Adjoint{<:Any,<:Bidiagonal}) =
     (B = aB.parent; Bidiagonal(map(x -> copy.(adjoint.(x)), (B.dv, B.ev))..., B.uplo == 'U' ? :L : :U))
