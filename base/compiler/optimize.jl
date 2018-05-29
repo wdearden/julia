@@ -500,6 +500,7 @@ function maybe_widen_conditional(vt)
         elseif vt.elsetype === Bottom
             vt = Const(true)
         end
+        vt = Bool
     end
     vt
 end
@@ -580,6 +581,7 @@ function type_annotate!(sv::InferenceState)
         if gt[j] === NOT_FOUND
             gt[j] = Union{}
         end
+        gt[j] = maybe_widen_conditional(gt[j])
     end
 
     # compute the required type for each slot
