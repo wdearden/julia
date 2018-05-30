@@ -17,7 +17,8 @@ import
         cosh, sinh, tanh, sech, csch, coth, acosh, asinh, atanh, atan2,
         cbrt, typemax, typemin, unsafe_trunc, realmin, realmax, rounding,
         setrounding, maxintfloat, widen, significand, frexp, tryparse, iszero,
-        isone, big, beta, RefValue
+        isone, big, beta, RefValue,
+        _string_n
 
 import .Base.Rounding: rounding_raw, setrounding_raw
 
@@ -55,18 +56,29 @@ mutable struct BigFloat <: AbstractFloat
     sign::Cint
     exp::Clong
     d::Ptr{Limb}
-
-    function BigFloat()
-        prec = precision(BigFloat)
-        z = new(zero(Clong), zero(Cint), zero(Clong), C_NULL)
-        ccall((:mpfr_init2,:libmpfr), Cvoid, (Ref{BigFloat}, Clong), z, prec)
-        finalizer(cglobal((:mpfr_clear, :libmpfr)), z)
-        return z
-    end
+    # _d::Buffer{Limb} # Julia gc handle for memory @ d
+    _d::String # Julia gc handle for memory @ d (optimized)
 
     # Not recommended for general use:
-    function BigFloat(prec::Clong, sign::Cint, exp::Clong, d::Ptr{Cvoid})
-        new(prec, sign, exp, d)
+    # used internally by, e.g. deepcopy
+    global function _BigFloat(prec::Clong, sign::Cint, exp::Clong, d::String)
+        # ccall-based version, inlined below
+        #z = new(zero(Clong), zero(Cint), zero(Clong), C_NULL, d)
+        #ccall((:mpfr_custom_init,:libmpfr), Cvoid, (Ptr{Limb}, Clong), d, prec) # currently seems to be a no-op in mpfr
+        #NAN_KIND = Cint(0)
+        #ccall((:mpfr_custom_init_set,:libmpfr), Cvoid, (Ref{BigFloat}, Cint, Clong, Ptr{Limb}), z, NAN_KIND, prec, d)
+        #return z
+        return new(prec, sign, exp, pointer(d), d)
+    end
+
+    function BigFloat()
+        prec::Clong = precision(BigFloat)
+        nb = ccall((:mpfr_custom_get_size,:libmpfr), Csize_t, (Clong,), prec)
+        nb = (nb + Core.sizeof(Limb) - 1) ÷ Core.sizeof(Limb) # align to number of Limb allocations required for this
+        #d = Vector{Limb}(undef, nb)
+        d = _string_n(nb * Core.sizeof(Limb))
+        EXP_NAN = Clong(1) - Clong(typemax(Culong) >> 1)
+        return _BigFloat(prec, one(Cint), EXP_NAN, d) # +NAN
     end
 end
 
@@ -668,14 +680,14 @@ for f in (:sin, :cos, :tan, :sec, :csc, :acos, :asin, :atan, :acosh, :asinh, :at
 end
 
 # log of absolute value of gamma function
-const lgamma_signp = Ref{Cint}()
-function lgamma(x::BigFloat)
+function lgamma_r(x::BigFloat)
     z = BigFloat()
+    lgamma_signp = Ref{Cint}()
     ccall((:mpfr_lgamma,:libmpfr), Cint, (Ref{BigFloat}, Ref{Cint}, Ref{BigFloat}, Int32), z, lgamma_signp, x, ROUNDING_MODE[])
-    return z
+    return z, lgamma_signp[]
 end
 
-lgamma_r(x::BigFloat) = (lgamma(x), lgamma_signp[])
+lgamma(x::BigFloat) = lgamma_r(x)[1]
 
 function atan2(y::BigFloat, x::BigFloat)
     z = BigFloat()
@@ -975,11 +987,10 @@ set_emin!(x) = ccall((:mpfr_set_emin, :libmpfr), Cvoid, (Clong,), x)
 
 function Base.deepcopy_internal(x::BigFloat, stackdict::IdDict)
     haskey(stackdict, x) && return stackdict[x]
-    prec = precision(x)
-    y = BigFloat(zero(Clong), zero(Cint), zero(Clong), C_NULL)
-    ccall((:mpfr_init2,:libmpfr), Cvoid, (Ref{BigFloat}, Clong), y, prec)
-    finalizer(cglobal((:mpfr_clear, :libmpfr)), y)
-    ccall((:mpfr_set, :libmpfr), Int32, (Ref{BigFloat}, Ref{BigFloat}, Int32), y, x, ROUNDING_MODE[])
+    # d = copy(x._d)
+    d = deepcopy(x._d) # creates a new String, fix this if that changes
+    y = _BigFloat(x.prec, x.sign, x.exp, d)
+    #ccall((:mpfr_custom_move,:libmpfr), Cvoid, (Ref{BigFloat}, Ptr{Limb}), y, d) # unnecessary
     stackdict[x] = y
     return y
 end
